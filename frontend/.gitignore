@@ -1,0 +1,23 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next
+/.next/
+/out/
+
+# PWA / Workbox (generes au build)
+/public/sw.js
+/public/sw.js.map
+/public/workbox-*.js
+/public/workbox-*.js.map
+/public/swe-worker-*.js
+/public/swe-worker-*.js.map
+/public/fallback-*.js
+
+# env
+.env*.local
+
+# debug
+npm-debug.log*
