@@ -6,6 +6,7 @@ import { WorksModule } from './works/works.module';
 import { EventsModule } from './events/events.module';
 import { AuthModule } from './auth/auth.module';
 import { ActivityModule } from './activity/activity.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { ActivityModule } from './activity/activity.module';
     EventsModule,
     AuthModule,
     ActivityModule,
+    NotificationsModule,
   ],
 })
 export class AppModule {}

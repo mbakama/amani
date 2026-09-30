@@ -7,7 +7,9 @@ const withPWA = require('@ducanh2912/next-pwa').default({
   },
   workboxOptions: {
     disableDevLogs: true,
+    importScripts: ['/sw-push.js'],
   },
+  extendDefaultRuntimeCaching: true,
 });
 
 /** @type {import('next').NextConfig} */
