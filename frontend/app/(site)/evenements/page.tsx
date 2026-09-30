@@ -5,8 +5,13 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Bell, Calendar, MapMarker, Plus, Video } from '@primeicons/react';
 import PageShell from '@/components/PageShell';
-import { apiGet, type EventItem } from '@/lib/api';
+import { apiGet, apiPost, type EventItem } from '@/lib/api';
 import { getSessionUser, getToken, type SessionUser } from '@/lib/auth';
+import {
+  subscribeToPush,
+  isPushSupported,
+  getNotificationPermission,
+} from '@/lib/push';
 
 type Filter = 'all' | 'online_live' | 'in_person';
 
@@ -21,7 +26,7 @@ const FILTERS = [
   { key: 'in_person' as const, label: 'Sur place' },
 ];
 
-function loadReminders(): Set<string> {
+function loadRemindersFromLocalStorage(): Set<string> {
   if (typeof window === 'undefined') return new Set();
   try {
     const raw = localStorage.getItem(REMINDERS_KEY);
@@ -32,7 +37,7 @@ function loadReminders(): Set<string> {
   }
 }
 
-function saveReminders(ids: Set<string>) {
+function saveRemindersToLocalStorage(ids: Set<string>) {
   localStorage.setItem(REMINDERS_KEY, JSON.stringify([...ids]));
 }
 
@@ -64,6 +69,8 @@ export default function EventsPage() {
   const [reminders, setReminders] = useState<Set<string>>(new Set());
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushSetupAttempted, setPushSetupAttempted] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,11 +91,62 @@ export default function EventsPage() {
     }
   }, []);
 
+  const loadReminders = useCallback(async (token: string) => {
+    try {
+      const response = await apiGet<{ eventIds: string[] }>(
+        '/notifications/reminders',
+        token,
+      );
+      const serverReminders = new Set(response.eventIds);
+      setReminders(serverReminders);
+      saveRemindersToLocalStorage(serverReminders);
+      return serverReminders;
+    } catch (error) {
+      console.error('Failed to load reminders from server:', error);
+      const localReminders = loadRemindersFromLocalStorage();
+      setReminders(localReminders);
+      return localReminders;
+    }
+  }, []);
+
+  const setupPushIfNeeded = useCallback(async (token: string) => {
+    if (pushSetupAttempted) return;
+    setPushSetupAttempted(true);
+
+    if (!isPushSupported()) {
+      console.log('Push notifications not supported');
+      return;
+    }
+
+    const permission = getNotificationPermission();
+    if (permission === 'granted') {
+      const result = await subscribeToPush(token);
+      if (result.success) {
+        setPushSubscribed(true);
+        console.log('Push subscription registered');
+      } else {
+        console.warn('Failed to register push subscription:', result.error);
+      }
+    }
+  }, [pushSetupAttempted]);
+
   useEffect(() => {
-    setSession(getSessionUser());
-    setReminders(loadReminders());
+    const currentSession = getSessionUser();
+    setSession(currentSession);
+
+    if (currentSession) {
+      const token = getToken();
+      if (token) {
+        void loadReminders(token);
+        void setupPushIfNeeded(token);
+      }
+    } else {
+      const localReminders = loadRemindersFromLocalStorage();
+      setReminders(localReminders);
+    }
+
     void load();
-  }, [load]);
+  }, [load, loadReminders, setupPushIfNeeded]);
 
   const canAnnounce = useMemo(() => {
     if (!session) return false;
@@ -144,14 +202,41 @@ export default function EventsPage() {
     [filtered, liveNow],
   );
 
-  function toggleReminder(id: string) {
-    setReminders((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      saveReminders(next);
-      return next;
-    });
+  async function toggleReminder(id: string) {
+    const token = getToken();
+    const wasEnabled = reminders.has(id);
+    const newEnabled = !wasEnabled;
+
+    const newReminders = new Set(reminders);
+    if (newEnabled) {
+      newReminders.add(id);
+    } else {
+      newReminders.delete(id);
+    }
+    setReminders(newReminders);
+    saveRemindersToLocalStorage(newReminders);
+
+    if (token) {
+      try {
+        await apiPost(
+          '/notifications/reminders/toggle',
+          { eventId: id, enabled: newEnabled },
+          token,
+        );
+
+        if (newEnabled && !pushSubscribed && isPushSupported()) {
+          const permission = getNotificationPermission();
+          if (permission === 'default') {
+            const result = await subscribeToPush(token);
+            if (result.success) {
+              setPushSubscribed(true);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to sync reminder with server:', error);
+      }
+    }
   }
 
   async function handleJoin(event: EventItem) {
